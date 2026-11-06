@@ -412,6 +412,24 @@ I've successfully defined..."
 
 ### 生图 / 音乐
 
+#### OpenAI Images API（9router）
+
+`POST /v1/images/generations` 和 `POST /v1/images/edits` 接受 JSON，使用同一把 API key 和
+Cookie 池。返回 OpenAI Images 格式的 `data[0].b64_json`；每次只生成一张图。
+编辑时 `image` 或 `images[]` 可传 `data:image/...;base64,...` 或 http(s) 链接。
+`size` / `aspect_ratio` 会作为构图提示词传给上游，不能保证精确像素尺寸；mask 不支持。
+
+```bash
+curl http://localhost:8083/v1/images/generations \
+  -H "Authorization: Bearer sk-gemini-..." \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gemini-image","prompt":"一只宇航员橘猫","aspect_ratio":"9:16"}'
+```
+
+9router 的 OpenAI Compatible 节点把 base URL 设为
+`http://gemini-web2api:8083/v1`（同 Docker network），模型 id 设为 `gemini-image`，
+类型选 `image`。本机运行则用 `http://127.0.0.1:8083/v1`。
+
 `gemini-image`（Nano Banana）和 `gemini-music`（Lyria，约 30 秒）跟普通对话一样走
 `/v1/chat/completions`，user 消息里写要画什么 / 要什么曲子。产物字节以 **base64
 data URL** 放进返回的 `content`：图片是 `![image](data:image/png;base64,…)`、音频是

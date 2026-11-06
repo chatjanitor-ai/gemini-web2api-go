@@ -1,0 +1,29 @@
+apiVersion: harness/v1
+kind: Project
+metadata:
+  name: gemini-web2api-go
+  group: personal
+  description: Gemini Web to OpenAI-compatible API fork for 9router image generation and editing
+  tags:
+  - Go
+  - Gemini
+  - Image API
+spec:
+  lifecycle: production
+  stack:
+    languages:
+    - Go
+  components:
+  - name: api
+    type: service
+  workflows:
+    dev:
+      run: make dev
+    test:
+      run: go test ./...
+    deploy:
+      run: push main → GHCR gemini-web2api-go:latest → janitor-infra deploy gemini-web2api-go
+      doc: README.md
+  knowledge:
+  - README.md
+  - .harness/CONTEXT.md

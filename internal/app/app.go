@@ -104,6 +104,8 @@ func Run() {
 			writeJSON(w, 405, map[string]string{"error": "method not allowed"})
 		}
 	}))
+	mux.HandleFunc("/v1/images/generations", requireAPIKey(handleImageGeneration))
+	mux.HandleFunc("/v1/images/edits", requireAPIKey(handleImageEdit))
 	mux.HandleFunc("/v1/responses", requireAPIKey(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case "OPTIONS":
