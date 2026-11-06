@@ -428,7 +428,9 @@ curl http://localhost:8083/v1/images/generations \
 
 9router 的 OpenAI Compatible 节点把 base URL 设为
 `http://gemini-web2api:8083/v1`（同 Docker network），模型 id 设为 `gemini-image`，
-类型选 `image`。本机运行则用 `http://127.0.0.1:8083/v1`。
+类型选 `image`，节点前缀选 `gemweb`（`gw` 已被内置 provider 占用）。
+下游模型名是 `gemweb/gemini-image`，在 9router 的 `/v1/models/image` 里列出。
+本机运行则用 `http://127.0.0.1:8083/v1`。
 
 `gemini-image`（Nano Banana）和 `gemini-music`（Lyria，约 30 秒）跟普通对话一样走
 `/v1/chat/completions`，user 消息里写要画什么 / 要什么曲子。产物字节以 **base64
