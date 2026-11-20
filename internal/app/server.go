@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-const Version = "4.27.0"
+const Version = "4.31.0"
 
 func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 	body, _ := json.Marshal(data)
@@ -176,6 +176,12 @@ func callGemini(prompt, latest string, mc ModelConfig, tools []map[string]interf
 	if len(tools) > 0 {
 		text, toolCalls = parseToolCalls(text)
 	}
+	// 回复只有一个解析不了的 ```tool_call``` 围栏（JSON 写坏 / 没有工具名）时，
+	// parseToolCalls 剥掉围栏后正文为空、也没有调用。跟 callGeminiConv 一样报错，
+	// 不能回 200 + content:null 且不带 tool_calls —— 客户端看不出请求其实失败了。
+	if text == "" && len(toolCalls) == 0 {
+		return "", nil, res, fmt.Errorf("upstream reply had only an unparseable tool_call block (raw %d bytes)", len(res.Raw))
+	}
 	return text, toolCalls, res, nil
 }
 
@@ -289,6 +295,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	var sse *sseWriter
 	var gate *toolFenceGate
 	var onDelta, onReasoning func(string)
+	var ka *streamKeepalive
 	if stream {
 		sse = newSSEWriter(w, cid, created, modelName)
 		onReasoning = sse.SendReasoning
@@ -298,6 +305,8 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			gate = newToolFenceGate(sse.SendContent)
 			onDelta = gate.Push
 		}
+		ka = startKeepalive(sse.Ping)
+		onDelta, onReasoning = ka.guard(onDelta), ka.guard(onReasoning)
 	}
 
 	var text string
@@ -309,6 +318,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	} else {
 		text, toolCalls, res, err = callGemini(prompt, latest, modelCfg, tools, images, onDelta, onReasoning)
 	}
+	ka.Stop() // 之后的收尾回到单 goroutine 写；Started() 也要在保活停下后再看
 	if err != nil {
 		mde, downgraded := err.(*ModelDowngradedError)
 		status := 502
@@ -600,6 +610,7 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
 	var emitDelta func(string)
 	var gate *toolFenceGate
 	var onDelta func(string)
+	var ka *streamKeepalive
 	if stream {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
@@ -661,6 +672,14 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
 			gate = newToolFenceGate(emitDelta)
 			onDelta = gate.Push
 		}
+		// 这条路响应头一开始就发了，保活没有锁状态码的代价。
+		ka = startKeepalive(func() {
+			fmt.Fprint(w, ": ping\n\n")
+			if flusher != nil {
+				flusher.Flush()
+			}
+		})
+		onDelta = ka.guard(onDelta)
 	}
 
 	// onReasoning 传 nil：Responses API 有自己的 reasoning 事件形状，跟 chat 的
@@ -673,6 +692,7 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
 	} else {
 		text, toolCalls, res, err = callGemini(prompt, latest, modelCfg, tools, images, onDelta, nil)
 	}
+	ka.Stop()
 	if err != nil {
 		mde, downgraded := err.(*ModelDowngradedError)
 		status := 502

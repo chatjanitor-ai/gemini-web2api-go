@@ -12,6 +12,7 @@ type Config struct {
 	RetryAttempts  int    `json:"retry_attempts"`
 	RetryDelaySec  int    `json:"retry_delay_sec"`
 	RequestTimeout int    `json:"request_timeout_sec"`
+	RetryOnTimeout bool   `json:"retry_on_timeout"`
 	GeminiBL       string `json:"gemini_bl"`
 	DefaultModel   string `json:"default_model"`
 	LogRequests    bool   `json:"log_requests"`
@@ -68,6 +69,12 @@ type Config struct {
 	StrictModel bool `json:"strict_model"`
 	// 被降级的号在该模型上冷却多久（分钟），0 = 不记。网页端用量按 5 小时滚动窗算，默认 300。
 	StrictModelCooldownMin int `json:"strict_model_cooldown_min"`
+	// 流式保活间隔（秒），0 = 关（默认）。见 keepalive.go。
+	StreamKeepaliveSec int `json:"stream_keepalive_sec"`
+	// 空闲超时（秒，#81）：上游开流后连续这么多秒一个 chunk 都不来就掐断、当瞬时错误
+	// 重试。0 = 关（默认）。总超时（request_timeout_sec）管不到"首字节到了但之后挂着"，
+	// 这个补那个缺口。只老协议（StreamGenerate）生效，见 gemini.go 的 readBodyWithIdle。
+	StreamIdleTimeoutSec int `json:"stream_idle_timeout_sec"`
 }
 
 var (
@@ -82,6 +89,7 @@ func defaultConfig() Config {
 		RetryAttempts:  3,
 		RetryDelaySec:  2,
 		RequestTimeout: 180,
+		RetryOnTimeout: true,
 		GeminiBL:       "boq_gemini-web-uiserver_20261007.01_p0",
 		DefaultModel:   "gemini-3.6-flash",
 		LogRequests:    true,

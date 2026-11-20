@@ -327,13 +327,25 @@ func handleGeminiModels(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]interface{}{"models": models})
 }
 
-// handleGeminiModelItem 分发 /v1beta/models/{model}[:action]。
+// handleV1GeminiAction 把 /v1/models/{model}:{action} 交给 Gemini 接口。google-genai 3.0.0
+// 起，自定义 base_url 时默认 api_version 是 v1，请求打到 /v1/models/…:generateContent
+// 而不是 /v1beta。只接带冒号的动作：不带冒号的 GET /v1/models/{id} 是 OpenAI 的
+// 「查单个模型」形状，两边响应体不同，不混用，照旧 404。
+func handleV1GeminiAction(w http.ResponseWriter, r *http.Request) {
+	if !strings.Contains(strings.TrimPrefix(r.URL.Path, "/v1/models/"), ":") {
+		writeJSON(w, 404, map[string]string{"error": "not found"})
+		return
+	}
+	handleGeminiModelItem(w, r)
+}
+
+// handleGeminiModelItem 分发 /v1beta/models/{model}[:action]（以及 /v1/models/{model}:action）。
 func handleGeminiModelItem(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "OPTIONS" {
 		handleOptions(w, r)
 		return
 	}
-	rest := strings.TrimPrefix(r.URL.Path, "/v1beta/models/")
+	rest := strings.TrimPrefix(strings.TrimPrefix(r.URL.Path, "/v1beta/models/"), "/v1/models/")
 	model, action := rest, ""
 	if i := strings.LastIndex(rest, ":"); i >= 0 {
 		model, action = rest[:i], rest[i+1:]
@@ -615,6 +627,13 @@ func (s *geminiStream) text(d string) {
 	s.chunk([]interface{}{map[string]interface{}{"text": d}}, "", nil)
 }
 
+// ping 保活（见 keepalive.go）：发一块空正文。不用 SSE 注释行，因为这条路还有
+// JSON 数组写法，而且 Google 的 SDK 按行 json 解析 data，注释行会让它解析失败；
+// 空 text 块是合法的 Gemini 响应块，客户端拼接正文时等于没有。
+func (s *geminiStream) ping() {
+	s.text("")
+}
+
 func (s *geminiStream) thought(d string) {
 	s.chunk([]interface{}{map[string]interface{}{"text": d, "thought": true}}, "", nil)
 }
@@ -653,8 +672,11 @@ func handleStreamGenerateContent(w http.ResponseWriter, r *http.Request, model s
 	if includeThoughts {
 		onReasoning = st.thought
 	}
+	ka := startKeepalive(st.ping)
+	onDelta, onReasoning = ka.guard(onDelta), ka.guard(onReasoning)
 
 	text, calls, res, err := runGeminiCall(g, onDelta, onReasoning)
+	ka.Stop() // 之后的收尾回到单 goroutine 写；Started() 也要在保活停下后再看
 	if err != nil {
 		status := 502
 		if _, ok := err.(*ModelDowngradedError); ok {
