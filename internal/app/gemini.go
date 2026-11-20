@@ -86,13 +86,17 @@ type ModelConfig struct {
 	// ThinkWire >0 时直接作为思考档线值（header 下标15 / inner[80]），覆盖 Thinking
 	// 推出的 1/2。用于 4 Argon「中等」档（=thinkingMedium=4）。两者都不设 = 普通(1)。
 	ThinkWire int
-	// Tool 非 0 时填 inner[49]，让服务端换后端模型生成媒体产物（14=生图 Nano Banana
-	// / 21=音乐 Lyria）。产物不在 StreamGenerate 响应里，要再走 hNvQHb 拿下载链、
+	// Tool 非 0 时通常填 inner[49]，让服务端换后端模型生成媒体产物（14=生图 Nano Banana
+	// / 21=音乐 Lyria）。PromptImage 是例外：用普通 Pro prompt 生图。
+	// 产物不在 StreamGenerate 响应里，要再走 hNvQHb 拿下载链、
 	// 用下载 host 认的 cookie 子集下回原始字节，见 media.go。跟登录态绑定：匿名请求
 	// 这个会被静默降级成一句「Are you signed in?」文本。
 	Tool int
+	// PromptImage asks the regular Pro route to draw from the prompt while keeping
+	// Tool=toolImage for artifact retrieval. It does not set the media tool slot.
+	PromptImage bool
 	// Upstream 是真用上这个模型时服务端自报的显示名（不含思考档后缀："3.1 Pro High"
-	// 记 "3.1 Pro"）。strict_model 拿它判静默降级，空 = 不判（媒体工具回报的是
+	// 记 "3.1 Pro"）。strict_model 拿它判静默降级，空 = 不判（媒体模型可能回报
 	// "Nano Banana 2" 这类后端名）。只能用显示名：跟它并排的 hex 现在不管实际用了
 	// 哪个模型都回 Flash-Lite 的那个。
 	Upstream string
@@ -181,7 +185,7 @@ var Models = map[string]ModelConfig{
 
 	// 媒体生成。inner[49] 一填，服务端换后端模型出图/出乐；产物走 hNvQHb + 下载 host
 	// 取回，以 base64 data URL 塞进 content 返回。都要登录态，没 cookie 时不暴露。
-	"gemini-image": {HexID: hexFlash36, Mode: 1, Tool: toolImage, Desc: "Image generation (Nano Banana); returns a base64 data URL; needs a signed-in cookie"},
+	"gemini-image": {HexID: hexPro31, Mode: 3, Tool: toolImage, PromptImage: true, Desc: "Image generation via Gemini Pro prompt; returns a base64 data URL; needs a signed-in cookie"},
 	"gemini-music": {HexID: hexFlash36, Mode: 1, Tool: toolMusic, Desc: "Music generation (Lyria, ~30s); returns a base64 data URL; needs a signed-in cookie"},
 	"gemini-video": {HexID: hexFlash36, Mode: 1, Tool: toolVideo, Desc: "Video generation (Veo, async); returns a base64 data URL; needs a signed-in cookie (usually a paid account)"},
 	// 画布：生成 immersive 交互 HTML 文档，内联返回（不是二进制、不用下载）。要登录态。
@@ -428,6 +432,11 @@ type fileRef struct {
 // 匿名能把文件传上去，但对话里一引用就被服务端回 1100。
 func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pendingUpload,
 	onDelta, onReasoning func(string)) (*StreamResult, error) {
+	// The prompt route generates new images. Editing uploaded images retains the
+	// existing media-tool route until its attachment protocol is verified here.
+	if mc.PromptImage && len(pending) > 0 {
+		mc.HexID, mc.Mode, mc.PromptImage = hexFlash36, 1, false
+	}
 	// strict_model 换号：被降级的号记冷却、本次排除，换下一个号重来。上限跟 XSRF 换号
 	// 一样是 maxCookieTries——连着几个号都降级，说明池子整体见底，不是撞上个别号。
 	exclude := map[int64]bool{}
@@ -645,6 +654,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
 		})
 	}
 
+	if mc.PromptImage {
+		prompt = "Generate an image of " + prompt
+	}
 	inner := make([]interface{}, innerSlots)
 	if len(files) > 0 {
 		// 形状逐字取自浏览器抓包：
@@ -728,7 +740,7 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
 		inner[98] = 1
 	}
 	// 媒体工具开关。填了服务端就换后端模型出图/出乐（响应里带产物引用，字节要另取）。
-	if mc.Tool > 0 {
+	if mc.Tool > 0 && !mc.PromptImage {
 		inner[49] = mc.Tool
 	}
 	// 视频还要在 inner[55] 指定画幅比例：[[16]]=16:9，[[17]]=9:16（抓包）。
@@ -748,6 +760,12 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
 	outerJSON, err := json.Marshal(outer)
 	if err != nil {
 		return nil, err
+	}
+	if mc.PromptImage {
+		outerJSON, err = promptImagePayload(prompt)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// 带 cookie 时必须多发一个表单字段 at（XSRF token），否则上游直接 400。
@@ -771,6 +789,13 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
 	setAuthUserHeaders(geminiHeaders, authUser)
 	geminiHeaders["x-goog-ext-525001261-jspb"] = modelHeader
 	geminiHeaders["x-goog-ext-525005358-jspb"] = sessionHeader
+	if mc.PromptImage {
+		geminiHeaders["x-goog-ext-525001261-jspb"] = promptImageModelHeader(mc.HexID)
+		geminiHeaders["x-goog-ext-73010990-jspb"] = "[0]"
+		geminiHeaders["Referer"] = "https://gemini.google.com/"
+		delete(geminiHeaders, "x-goog-ext-525005358-jspb")
+		delete(geminiHeaders, "Authorization")
+	}
 	var lastErr error
 	// 最后一次拿到的 HTTP 状态码，0 表示网络层就失败了没拿到响应。
 	// cookie 健康度只认 401/403，别的状态不算 cookie 的错，见 markCookieByStatus。
@@ -910,7 +935,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
 		// says "empty" — but the job is already queued upstream. Retrying here generates
 		// one extra video per attempt (burning daily quota). Once a conversation id
 		// exists, treat it as accepted and let fetchMediaArtifacts poll hNvQHb.
-		if !hasContentFrame(string(raw)) && !videoAccepted(mc.Tool, string(raw)) {
+		if !hasContentFrame(string(raw)) &&
+			!(mc.Tool == toolImage && len(collectCandidateImageURLs(string(raw))) > 0) &&
+			!videoAccepted(mc.Tool, string(raw)) {
 			lastErr = fmt.Errorf("upstream returned no content frame (raw %d bytes)", len(raw))
 			if pickedOK {
 				// 记进代理健康度：1155 跟出口质量强相关（干净出口 60+ 次 0 发生，

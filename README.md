@@ -360,7 +360,7 @@ Claude Code / Cursor 这类 MCP 客户端直接调用。
 | `gemini-4-neon-thinking` | 4 Neon 扩展思考（High 档），带 `reasoning_content`。**要付费/Ultra 号 cookie**。`gemini-3.1-pro-thinking` 为旧名称 |
 | `gemini-4-argon-thinking` | Carbon 开扩展思考。**目前拿到的是普通档**：让 Carbon 不卡住的那个请求参数会关掉思考档，两者暂时不能兼得。**要付费/Ultra 号 cookie** |
 | `gemini-4-argon-thinking-medium` | Carbon 的中等思考档（上游 Medium，不带 `reasoning_content`），**要付费/Ultra 号 cookie**（请求里同样带着上一条说的参数，中档还生不生效没验证）|
-| `gemini-image` | 生图（Nano Banana），产物 base64，**要配 cookie** |
+| `gemini-image` | 生图（Pro prompt 路径），产物 base64，**要配 cookie** |
 | `gemini-music` | 音乐（Lyria，约 30 秒），产物 base64，**要配 cookie** |
 | `gemini-canvas` | 画布，生成交互 HTML 文档（内联返回 ```html 块），**要配 cookie** |
 | `gemini-video` | 生视频（异步，几十秒~几分钟），产物 base64 MP4，**要 Pro/付费号**；免费号被上游内容政策拒 |
@@ -448,7 +448,7 @@ curl http://localhost:8083/v1/images/generations \
 下游模型名是 `gemweb/gemini-image`，在 9router 的 `/v1/models/image` 里列出。
 本机运行则用 `http://127.0.0.1:8083/v1`。
 
-`gemini-image`（Nano Banana）和 `gemini-music`（Lyria，约 30 秒）跟普通对话一样走
+`gemini-image`（Pro prompt 路径）和 `gemini-music`（Lyria，约 30 秒）跟普通对话一样走
 `/v1/chat/completions`，user 消息里写要画什么 / 要什么曲子。产物字节以 **base64
 data URL** 放进返回的 `content`：图片是 `![image](data:image/png;base64,…)`、音频是
 `[audio](data:audio/mpeg;base64,…)`。支持 markdown 的客户端能直接把图渲染出来；要存
@@ -888,7 +888,7 @@ v4.31.0 起恢复。
 
 ### 生图用的是哪个模型？能出 2K 吗？
 
-`gemini-image` 走的是网页端的生图工具位，不锁模型：网页端当前用什么生图后端（如 Nano Banana 2），这里就自动跟着。
+`gemini-image` 的新图生成走 Pro prompt 路径；带图片附件的编辑仍走网页端生图工具位。
 默认拿到的图约 100 万像素（如 1376×768）。Ultra 号在「设置」打开**生图下载原图/放大**（`image_upscale`）后，
 能拿到宽高各 2 倍的 2752×1536（约 2K）；普通号拿不到放大，但能拿到没被重新压缩的原始文件。
 

@@ -287,11 +287,18 @@ func mp4InProtobuf(b []byte, depth int) []byte {
 // fetchImageArtifacts 取回生成的图片。链在 StreamGenerate 响应里就有，抠不到再退回轮询
 // hNvQHb。下载走 mediaGetFollow（跟随 302 并每跳重发 cookie）。
 func fetchImageArtifacts(raw, cid, cookie, sapisid, xsrf, proxyURL, defaultMime string, authuser int) ([]MediaArtifact, error) {
-	urls := collectImageURLs(raw)
+	urls := collectCandidateImageURLs(raw)
+	if len(urls) == 0 {
+		urls = collectImageURLs(raw)
+	}
 	if len(urls) == 0 {
 		for i := 0; i < 6; i++ {
 			if body, err := pollHistoryRaw(cid, cookie, sapisid, xsrf, proxyURL, authuser); err == nil {
-				if u := collectImageURLs(body); len(u) > 0 {
+				u := collectCandidateImageURLs(body)
+				if len(u) == 0 {
+					u = collectImageURLs(body)
+				}
+				if len(u) > 0 {
 					urls = u
 					break
 				}
@@ -315,6 +322,54 @@ func fetchImageArtifacts(raw, cid, cookie, sapisid, xsrf, proxyURL, defaultMime 
 		}
 	}
 	return arts, nil
+}
+
+// collectCandidateImageURLs reads generated images from the response candidate's
+// image block. Restricting the host avoids treating a URL in model text as an
+// artifact to download.
+func collectCandidateImageURLs(raw string) []string {
+	seen := map[string]bool{}
+	var urls []string
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "[[") {
+			continue
+		}
+		var frames []interface{}
+		if json.Unmarshal([]byte(line), &frames) != nil {
+			continue
+		}
+		for _, frame := range frames {
+			payload, ok := jsAt(frame, 2).(string)
+			if !ok {
+				continue
+			}
+			var body []interface{}
+			if json.Unmarshal([]byte(payload), &body) != nil {
+				continue
+			}
+			candidate := jsAt(jsAt(body, 4), 0)
+			images := jsAt(jsAt(jsAt(candidate, 12), 7), 0)
+			list, ok := images.([]interface{})
+			if !ok {
+				continue
+			}
+			for _, image := range list {
+				meta := jsAt(jsAt(image, 0), 3)
+				link, ok := jsAt(meta, 3).(string)
+				if !ok || seen[link] {
+					continue
+				}
+				u, err := url.Parse(link)
+				if err != nil || u.Scheme != "https" || u.Hostname() != "lh3.googleusercontent.com" {
+					continue
+				}
+				seen[link] = true
+				urls = append(urls, link)
+			}
+		}
+	}
+	return urls
 }
 
 // imageFullResURL 给图片 CDN 链加尺寸参数取原图。plain gg-dl 默认下来是 ~500px 的缩略图

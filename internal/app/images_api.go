@@ -13,7 +13,7 @@ import (
 )
 
 // 9router's OpenAI-compatible image adapter sends JSON to these two endpoints.
-// Gemini's image tool returns a Markdown data URL, so translate it into the
+// Gemini image generation returns a Markdown data URL, so translate it into the
 // OpenAI images response without storing the generated image on this server.
 var generatedImageURL = regexp.MustCompile(`data:image/(png|jpeg|jpg|webp);base64,([A-Za-z0-9+/=]+)`)
 

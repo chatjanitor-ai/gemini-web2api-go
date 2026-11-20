@@ -141,7 +141,7 @@ func TestExplainCookieFailureSorry(t *testing.T) {
 		t.Errorf("sorry 302: got %q", got)
 	}
 	got = explainCookieFailure(newAppPageStatusError(302, "https://accounts.google.com/ServiceLogin"))
-	if got != "cookie 无效：被重定向到登录页" {
+	if got != "当前出口的登录态被重定向到登录页（cookie 过期或此出口未被接受）" {
 		t.Errorf("login 302: got %q", got)
 	}
 }

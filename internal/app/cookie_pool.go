@@ -582,7 +582,7 @@ func explainCookieFailure(err error) string {
 	case strings.Contains(msg, "HTTP 429"), strings.Contains(msg, "sorry"):
 		return "出口被上游限流，换个代理再试（不是 cookie 的问题）"
 	case strings.Contains(msg, "HTTP 302"):
-		return "cookie 无效：被重定向到登录页"
+		return "当前出口的登录态被重定向到登录页（cookie 过期或此出口未被接受）"
 	default:
 		return "检测失败：" + msg
 	}
